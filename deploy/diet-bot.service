@@ -1,0 +1,51 @@
+; Unit de USUÁRIO, não de sistema: o `claude` usa o login OAuth guardado no
+; $HOME. Rodando como root o bot quebraria em toda extração.
+;
+; Instalar:
+;   mkdir -p ~/.config/systemd/user
+;   cp deploy/diet-bot.service ~/.config/systemd/user/
+;   systemctl --user daemon-reload
+;   systemctl --user enable --now diet-bot
+;   loginctl enable-linger felipe     # sobe no boot, sem precisar logar
+;
+; Logs: journalctl --user -u diet-bot -f   (e também em bot.log, com rotação)
+
+[Unit]
+Description=Bot de dieta via Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/felipe/Documents/Personal/telegram-diet-bot
+ExecStart=/home/felipe/Documents/Personal/telegram-diet-bot/.venv/bin/python bot.py
+
+; No boot com linger não existe sessão de login, e o PATH do systemd --user
+; vira o default do sistema, sem ~/.local/bin — onde mora o `claude`. Sem esta
+; linha toda extração morria com FileNotFoundError depois de um boot.
+; O config.py também resolve o binário sozinho; isto é a segunda camada, e
+; garante um PATH sano para os subprocessos que o próprio claude dispara.
+Environment=PATH=/home/felipe/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+; Sempre de volta. RestartSec dá folga pra internet voltar depois do boot.
+Restart=always
+RestartSec=10
+
+; Hardening possível numa unit de USUÁRIO. As diretivas Protect{Kernel*,
+; ControlGroups} foram tiradas de propósito: exigem CAP_SYS_ADMIN, que o
+; systemd --user não tem (falha 218/CAPABILITIES). São proteções contra um
+; processo root, e este roda sem privilégio nenhum.
+; Também NÃO usa ProtectHome nem ProtectSystem=strict: o `claude` precisa ler
+; as credenciais OAuth em ~/.claude, e o bot escreve em tmp/, models/ e bot.log.
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+; O .env é 600 e tem a secret key do Supabase: não deixa o log do journal
+; herdar nada por acidente.
+UMask=0077
+
+[Install]
+WantedBy=default.target
