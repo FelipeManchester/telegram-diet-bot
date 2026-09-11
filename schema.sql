@@ -30,10 +30,6 @@ create index if not exists refeicoes_criado_em_idx
 grant usage on schema dieta to anon, authenticated, service_role;
 grant all on all tables in schema dieta to service_role;
 
--- RLS fica desligada de propósito: banco single-user, acessado só pelo bot
--- local com a secret key (que ignora RLS de qualquer forma). A secret key
--- nunca sai do .env desta máquina.
-
 -- Consulta de referência pro roadmap (total por dia, no fuso de São Paulo):
 --
 --   select date_trunc('day', criado_em at time zone 'America/Sao_Paulo') as dia,

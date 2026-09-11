@@ -1,7 +1,4 @@
 """Transcrição local de notas de voz com faster-whisper.
-
-Sem API paga, sem internet depois do download inicial do modelo. O Claude nunca
-vê o áudio — ele recebe só o texto que sai daqui.
 """
 
 import logging
@@ -22,12 +19,7 @@ _modelo: WhisperModel | None = None
 
 
 def _carregar() -> WhisperModel:
-    """Carrega o modelo uma vez, na primeira nota de voz.
 
-    Preguiçoso de propósito: instanciar por mensagem custaria segundos toda vez,
-    mas carregar no import faria o bot baixar ~460MB antes de conseguir responder
-    a primeira mensagem de texto.
-    """
     global _modelo
     if _modelo is None:
         log.info("carregando modelo whisper %s...", config.WHISPER_MODEL)
@@ -42,8 +34,7 @@ def _carregar() -> WhisperModel:
 
 
 def transcrever(caminho_audio: str | Path) -> str:
-    """Transcreve um .ogg do Telegram. Síncrono e pesado em CPU — chame via
-    `asyncio.to_thread()`."""
+    """Transcreve um .ogg do Telegram."""
     try:
         segmentos, _info = _carregar().transcribe(
             str(caminho_audio), language="pt", beam_size=5

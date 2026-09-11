@@ -1,7 +1,4 @@
 """Configuração do bot, lida do .env e validada no import.
-
-Se faltar variável, o processo morre aqui — melhor do que descobrir na primeira
-refeição que você tentar registrar.
 """
 
 from pathlib import Path
@@ -50,12 +47,6 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "sonnet").strip()
 
 def _resolver_claude_bin() -> str:
     """Caminho absoluto do CLI do Claude.
-
-    O serviço sobe no boot via linger, ou seja, sem sessão de login: o PATH do
-    `systemd --user` é o default do sistema e não inclui ~/.local/bin, que é
-    onde o instalador do Claude Code põe o binário. Chamar só "claude" dava
-    FileNotFoundError em toda refeição depois de um boot. Resolver aqui troca
-    essa falha silenciosa e repetida por uma falha imediata na subida.
     """
     configurado = os.getenv("CLAUDE_BIN", "").strip()
     if configurado:

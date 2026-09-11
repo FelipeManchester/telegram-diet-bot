@@ -31,14 +31,7 @@ CAMPOS_MACRO = ("calorias", "proteina_g", "carboidrato_g", "gordura_g")
 
 
 def buscar_refeicoes(inicio: datetime, fim: datetime) -> list[dict]:
-    """Refeições com criado_em em [inicio, fim) — fim exclusivo.
-
-    Os dois limites são datetimes com fuso; o isoformat leva o offset junto e o
-    PostgREST compara contra o timestamptz em UTC sem ambiguidade.
-
-    Traz as linhas e soma em Python em vez de um sum() no banco: seriam poucas
-    dezenas de linhas por semana, e somar aqui evita ter que criar (e versionar)
-    uma função RPC no Supabase.
+    """Refeições com criado_em em [inicio, fim) 
     """
     try:
         resposta = (
@@ -62,13 +55,6 @@ def salvar_refeicao(
     criado_em: datetime | None = None,
 ) -> dict:
     """Grava uma refeição e devolve a linha criada.
-
-    `extracao` é o dict já validado que veio do claude_client.
-
-    `criado_em` é a hora em que a MENSAGEM foi enviada, não a hora em que o bot
-    processou. As duas divergem quando o PC ficou desligado: o Telegram segura os
-    updates por 24h e entrega tudo de uma vez quando o bot volta. Sem isso, uma
-    refeição de sábado entraria no total de segunda.
     """
     linha = {
         "origem": origem,
