@@ -27,6 +27,34 @@ class DBError(RuntimeError):
     pass
 
 
+CAMPOS_MACRO = ("calorias", "proteina_g", "carboidrato_g", "gordura_g")
+
+
+def buscar_refeicoes(inicio: datetime, fim: datetime) -> list[dict]:
+    """Refeições com criado_em em [inicio, fim) — fim exclusivo.
+
+    Os dois limites são datetimes com fuso; o isoformat leva o offset junto e o
+    PostgREST compara contra o timestamptz em UTC sem ambiguidade.
+
+    Traz as linhas e soma em Python em vez de um sum() no banco: seriam poucas
+    dezenas de linhas por semana, e somar aqui evita ter que criar (e versionar)
+    uma função RPC no Supabase.
+    """
+    try:
+        resposta = (
+            _tabela()
+            .select(",".join(("criado_em",) + CAMPOS_MACRO))
+            .gte("criado_em", inicio.isoformat())
+            .lt("criado_em", fim.isoformat())
+            .order("criado_em")
+            .execute()
+        )
+    except Exception as exc:
+        raise DBError(f"falha ao consultar o banco ({exc})") from exc
+
+    return resposta.data or []
+
+
 def salvar_refeicao(
     origem: str,
     entrada_bruta: str,

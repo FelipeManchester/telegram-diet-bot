@@ -16,6 +16,7 @@ from telegram.constants import ChatAction
 from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.ext import (
     Application,
+    CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
@@ -24,6 +25,7 @@ from telegram.ext import (
 import claude_client
 import config
 import db
+import resumo
 import transcriber
 
 # Rotação: serviço 24/7 com FileHandler simples cresce até encher o disco.
@@ -230,11 +232,47 @@ async def handler_foto(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         _limpar(caminho)
 
 
-async def _responder_erro(update: Update, exc: Exception) -> None:
-    log.warning("falha ao registrar: %s", exc)
+async def _responder_resumo(update: Update, periodo: str) -> None:
+    """Caminho dos dois comandos: nada de Claude, só soma do que está no banco."""
+    if not _autorizado(update):
+        return
+
+    try:
+        await _sinalizar_digitando(update)
+        # supabase-py é síncrono; fora do event loop, como na escrita.
+        dados = await asyncio.to_thread(resumo.resumir, periodo)
+        texto = resumo.formatar(dados)
+        await _com_retry(
+            lambda: update.message.reply_text(texto), f"envio do resumo {periodo}"
+        )
+    except db.DBError as exc:
+        await _responder_erro(update, exc, acao="consultar")
+    except NetworkError:
+        log.exception("rede falhou no resumo %s", periodo)
+        await _responder_erro(
+            update, RuntimeError("Telegram fora de alcance. Manda de novo."),
+            acao="consultar",
+        )
+    except Exception:
+        log.exception("erro inesperado no resumo %s", periodo)
+        await _responder_erro(
+            update, RuntimeError("erro inesperado (veja bot.log)"), acao="consultar"
+        )
+
+
+async def handler_hoje(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await _responder_resumo(update, resumo.HOJE)
+
+
+async def handler_semana(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await _responder_resumo(update, resumo.SEMANA)
+
+
+async def _responder_erro(update: Update, exc: Exception, acao: str = "registrar") -> None:
+    log.warning("falha ao %s: %s", acao, exc)
     try:
         await _com_retry(
-            lambda: update.message.reply_text(f"❌ Não consegui registrar: {exc}"),
+            lambda: update.message.reply_text(f"❌ Não consegui {acao}: {exc}"),
             "envio da mensagem de erro",
         )
     except TelegramError:
@@ -247,6 +285,23 @@ def _limpar(caminho: Path | None) -> None:
     """Apaga o diretório da mensagem inteiro, não só o arquivo."""
     if caminho is not None:
         shutil.rmtree(caminho.parent, ignore_errors=True)
+
+
+async def _registrar_menu(app: Application) -> None:
+    """Põe os comandos no menu do Telegram (o "/" do teclado).
+
+    Best-effort: é conveniência de interface, não vale derrubar a subida do bot
+    se a rede estiver ruim bem na hora do boot.
+    """
+    try:
+        await app.bot.set_my_commands(
+            [
+                ("hoje", "Consumo de hoje"),
+                ("semana", "Consumo dos últimos 7 dias (sem contar hoje)"),
+            ]
+        )
+    except TelegramError as exc:
+        log.warning("não consegui registrar o menu de comandos: %s", exc)
 
 
 def main() -> None:
@@ -268,6 +323,9 @@ def main() -> None:
     app.add_handler(MessageHandler(SO_EU & filters.TEXT & ~filters.COMMAND, handler_texto))
     app.add_handler(MessageHandler(SO_EU & (filters.VOICE | filters.AUDIO), handler_audio))
     app.add_handler(MessageHandler(SO_EU & filters.PHOTO, handler_foto))
+    app.add_handler(CommandHandler("hoje", handler_hoje, filters=SO_EU))
+    app.add_handler(CommandHandler("semana", handler_semana, filters=SO_EU))
+    app.post_init = _registrar_menu
 
     log.info("bot no ar (long polling), autorizado: %s", config.TELEGRAM_USER_ID)
     # Long polling: sem webhook, sem porta exposta.

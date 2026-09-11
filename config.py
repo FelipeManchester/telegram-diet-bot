@@ -5,6 +5,7 @@ refeição que você tentar registrar.
 """
 
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 import os
@@ -76,6 +77,10 @@ def _resolver_claude_bin() -> str:
 
 CLAUDE_BIN = _resolver_claude_bin()
 CLAUDE_TIMEOUT_SEC = int(os.getenv("CLAUDE_TIMEOUT_SEC", "120"))
+
+# O banco guarda criado_em em UTC (timestamptz). "Hoje" só faz sentido no seu
+# fuso: sem isto, todo jantar depois das 21h cairia no dia seguinte.
+TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "America/Sao_Paulo").strip())
 
 TMP_DIR.mkdir(exist_ok=True)
 MODELS_DIR.mkdir(exist_ok=True)
