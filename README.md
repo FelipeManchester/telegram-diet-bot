@@ -107,19 +107,21 @@ Para o bot ficar de pé o tempo todo e pegar as mensagens que chegaram enquanto 
 computador estava desligado:
 
 ```bash
-# ajuste os caminhos e o usuário dentro do arquivo antes de copiar
-mkdir -p ~/.config/systemd/user
-cp deploy/diet-bot.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now diet-bot
-loginctl enable-linger $USER    # sobe no boot, sem precisar fazer login
+./deploy/install.sh
 ```
+
+O script detecta o caminho deste clone, gera a unit a partir de
+[`deploy/diet-bot.service.template`](deploy/diet-bot.service.template) e instala
+em `~/.config/systemd/user/`. Antes disso confere que a venv existe, que o
+`.env` está preenchido e que o `config.py` importa sem erro — melhor falhar ali
+do que num loop de restart do systemd.
+
+Também ativa o `linger`, que é o que faz o serviço subir no boot sem você
+precisar fazer login. Se o polkit pedir senha e você recusar, rode
+`sudo loginctl enable-linger $USER`.
 
 Logs: `journalctl --user -u diet-bot -f`, e também em `bot.log` (rotação em 5
 arquivos de 2 MB).
-
-O [`deploy/diet-bot.service`](deploy/diet-bot.service) tem caminhos absolutos de
-`/home/felipe` — **troque pelos seus** antes de instalar.
 
 É uma unit de **usuário**, não de sistema, de propósito: o `claude` lê as
 credenciais OAuth do `$HOME`. Rodando como root, toda extração quebraria.
@@ -216,5 +218,5 @@ db.py              leitura e escrita no Supabase
 resumo.py          janelas de tempo e totais dos comandos /hoje e /semana
 config.py          .env validado no import
 schema.sql         tabela, índice e grants — rodar uma vez
-deploy/            unit systemd de usuário
+deploy/            template da unit systemd e script de instalação
 ```

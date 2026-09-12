@@ -1,0 +1,31 @@
+; Template. O deploy/install.sh substitui __PROJETO__ e instala.
+; Unit de usuário, não de sistema: o `claude` lê o login OAuth do $HOME.
+
+[Unit]
+Description=Bot de dieta via Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJETO__
+ExecStart=__PROJETO__/.venv/bin/python bot.py
+
+; No boot com linger não há sessão de login, e o PATH default não inclui
+; ~/.local/bin, onde fica o `claude`.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+; O .env tem a secret key do Supabase.
+UMask=0077
+
+[Install]
+WantedBy=default.target
