@@ -67,7 +67,7 @@ os totais em 0.
 SCHEMA_TEXTO = {
     "type": "object",
     "properties": {
-        "tipo": {"type": "string", "enum": ["refeicao", "atividade", "nenhum"]},
+        "tipo": {"type": "string", "enum": ["refeicao", "atividade", "peso", "nenhum"]},
         "refeicao": SCHEMA_REFEICAO,
         "atividade": {
             "type": "object",
@@ -77,6 +77,11 @@ SCHEMA_TEXTO = {
                 "calorias": {"type": "number"},
             },
             "required": ["descricao", "duracao_min", "calorias"],
+        },
+        "peso": {
+            "type": "object",
+            "properties": {"peso_kg": {"type": "number"}},
+            "required": ["peso_kg"],
         },
     },
     "required": ["tipo"],
@@ -89,13 +94,15 @@ o campo "tipo":
 - "refeicao": descreve comida ou bebida consumida.
 - "atividade": descreve exercício físico realizado (corrida, caminhada, \
 musculação, bike, natação etc).
-- "nenhum": não é nem uma coisa nem outra.
+- "peso": informa o peso corporal do usuário (ex: "me pesei hoje, estou com \
+95kg", "89,4 na balança").
+- "nenhum": não é nenhum dos anteriores.
 
-Preencha SOMENTE o campo correspondente ao "tipo" escolhido ("refeicao" ou \
-"atividade"); omita o outro.
+Preencha SOMENTE o campo correspondente ao "tipo" escolhido ("refeicao", \
+"atividade" ou "peso"); omita os outros.
 
 Ignore vocativos e saudações ("Claude,", "ô Claude", "bom dia", "então") em \
-ambos os casos.
+qualquer um dos casos.
 
 Regras para "refeicao":
 - Quantidade não informada: estime a porção caseira brasileira típica e deixe a \
@@ -116,6 +123,10 @@ intensidade típica (MET aproximado) para um adulto de porte médio (~70kg), na 
 ausência de mais informação.
 - "descricao": resume o exercício e, quando relevante, grupo muscular ou \
 distância (ex.: "Corrida de 5km", "Musculação (peito e ombro)", "Bike ergométrica").
+
+Regras para "peso":
+- "peso_kg": peso corporal em quilos. Converta se vier em outra unidade \
+(libras, arrobas) e aceite vírgula como separador decimal ("89,4" = 89.4).
 
 Responda APENAS com o JSON do schema fornecido.
 """
@@ -263,13 +274,26 @@ def _validar_atividade(dados: dict) -> dict:
     }
 
 
+def _validar_peso(dados: dict) -> dict:
+    peso = _numero(dados, "peso_kg")
+    # Fora dessa faixa é erro de extração (transcrição trocando número, peso em
+    # libras não convertido), não um peso real.
+    if not 20 <= peso <= 400:
+        raise ClaudeError(f"peso fora do esperado ({peso:g} kg)")
+    return {"peso_kg": peso}
+
+
 def _validar_texto(dados: dict) -> dict:
     tipo = dados.get("tipo")
     if tipo == "refeicao":
         return {"tipo": tipo, **_validar_refeicao(dados.get("refeicao") or {})}
     if tipo == "atividade":
         return {"tipo": tipo, **_validar_atividade(dados.get("atividade") or {})}
-    raise ClaudeError("não identifiquei refeição nem atividade física nessa mensagem")
+    if tipo == "peso":
+        return {"tipo": tipo, **_validar_peso(dados.get("peso") or {})}
+    raise ClaudeError(
+        "não identifiquei refeição, atividade física nem peso nessa mensagem"
+    )
 
 
 def _numero(origem: dict, campo: str) -> float:
@@ -280,9 +304,9 @@ def _numero(origem: dict, campo: str) -> float:
 
 
 async def interpretar_texto(texto: str) -> dict:
-    """Extrai refeição ou atividade física de um texto digitado ou transcrição de
-    áudio. O resultado traz "tipo": "refeicao" ou "atividade" para o chamador
-    decidir onde gravar."""
+    """Extrai refeição, atividade física ou peso corporal de um texto digitado ou
+    transcrição de áudio. O resultado traz "tipo": "refeicao", "atividade" ou
+    "peso" para o chamador decidir onde gravar."""
     with tempfile.TemporaryDirectory(dir=config.TMP_DIR) as vazio:
         dados = await _chamar_claude(
             texto,

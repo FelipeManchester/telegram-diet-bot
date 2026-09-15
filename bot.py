@@ -115,6 +115,10 @@ def _formatar_confirmacao_atividade(atividade: dict) -> str:
     )
 
 
+def _formatar_confirmacao_peso(peso: dict) -> str:
+    return f"⚖️ Peso registrado: {resumo.formatar_peso(peso['peso_kg'])}"
+
+
 async def _registrar(update: Update, origem: str, entrada_bruta: str, extracao: dict) -> None:
     # update.message.date é quando VOCÊ mandou, não quando o bot processou.
     # Importa quando o PC passou um tempo desligado e o Telegram entregou a fila
@@ -151,12 +155,29 @@ async def _registrar_atividade(
         log.exception("atividade salva, mas a confirmação não chegou ao Telegram")
 
 
+async def _registrar_peso(
+    update: Update, origem: str, entrada_bruta: str, peso: dict
+) -> None:
+    await asyncio.to_thread(
+        db.salvar_peso, origem, entrada_bruta, peso, update.message.date
+    )
+    texto = _formatar_confirmacao_peso(peso)
+    try:
+        await _com_retry(
+            lambda: update.message.reply_text(texto), "envio da confirmação"
+        )
+    except TelegramError:
+        log.exception("peso salvo, mas a confirmação não chegou ao Telegram")
+
+
 async def _registrar_interpretacao(
     update: Update, origem: str, entrada_bruta: str, resultado: dict
 ) -> None:
     """Roteia pro registro certo conforme o "tipo" decidido pelo Claude."""
     if resultado["tipo"] == "refeicao":
         await _registrar(update, origem, entrada_bruta, resultado)
+    elif resultado["tipo"] == "peso":
+        await _registrar_peso(update, origem, entrada_bruta, resultado)
     else:
         await _registrar_atividade(update, origem, entrada_bruta, resultado)
 

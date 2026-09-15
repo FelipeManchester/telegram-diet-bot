@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 TABELA = "refeicoes"
 TABELA_ATIVIDADES = "atividades"
+TABELA_PESOS = "pesos"
 
 _cliente: Client = create_client(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY)
 
@@ -30,6 +31,7 @@ class DBError(RuntimeError):
 
 CAMPOS_MACRO = ("calorias", "proteina_g", "carboidrato_g", "gordura_g")
 CAMPOS_ATIVIDADE = ("descricao", "duracao_min", "calorias")
+CAMPOS_PESO = ("peso_kg",)
 
 
 def buscar_refeicoes(inicio: datetime, fim: datetime) -> list[dict]:
@@ -56,6 +58,23 @@ def buscar_atividades(inicio: datetime, fim: datetime) -> list[dict]:
         resposta = (
             _tabela(TABELA_ATIVIDADES)
             .select(",".join(("criado_em",) + CAMPOS_ATIVIDADE))
+            .gte("criado_em", inicio.isoformat())
+            .lt("criado_em", fim.isoformat())
+            .order("criado_em")
+            .execute()
+        )
+    except Exception as exc:
+        raise DBError(f"falha ao consultar o banco ({exc})") from exc
+
+    return resposta.data or []
+
+
+def buscar_pesos(inicio: datetime, fim: datetime) -> list[dict]:
+    """Pesagens com criado_em em [inicio, fim)"""
+    try:
+        resposta = (
+            _tabela(TABELA_PESOS)
+            .select(",".join(("criado_em",) + CAMPOS_PESO))
             .gte("criado_em", inicio.isoformat())
             .lt("criado_em", fim.isoformat())
             .order("criado_em")
@@ -125,4 +144,31 @@ def salvar_atividade(
         raise DBError("o insert não retornou nenhuma linha")
 
     log.info("atividade salva: id=%s origem=%s", resposta.data[0].get("id"), origem)
+    return resposta.data[0]
+
+
+def salvar_peso(
+    origem: str,
+    entrada_bruta: str,
+    dados: dict,
+    criado_em: datetime | None = None,
+) -> dict:
+    """Grava uma pesagem e devolve a linha criada."""
+    linha = {
+        "origem": origem,
+        "entrada_bruta": entrada_bruta,
+        "peso_kg": dados["peso_kg"],
+    }
+    if criado_em is not None:
+        linha["criado_em"] = criado_em.isoformat()
+
+    try:
+        resposta = _tabela(TABELA_PESOS).insert(linha).execute()
+    except Exception as exc:
+        raise DBError(f"falha ao salvar peso no banco ({exc})") from exc
+
+    if not resposta.data:
+        raise DBError("o insert não retornou nenhuma linha")
+
+    log.info("peso salvo: id=%s origem=%s", resposta.data[0].get("id"), origem)
     return resposta.data[0]

@@ -54,11 +54,22 @@ def _agrupar_atividades_por_dia(atividades: list[dict]) -> dict[date, list[dict]
     return por_dia
 
 
+def _peso_por_dia(pesos: list[dict]) -> dict[date, float]:
+    """Uma pesagem por dia: se houve mais de uma, vale a última (as linhas vêm
+    ordenadas por criado_em)."""
+    por_dia: dict[date, float] = {}
+    for peso in pesos:
+        dia = datetime.fromisoformat(peso["criado_em"]).astimezone(config.TIMEZONE).date()
+        por_dia[dia] = float(peso["peso_kg"])
+    return por_dia
+
+
 def resumir(periodo: str, agora: datetime | None = None) -> dict:
     """Totais do período. `refeicoes` é a contagem, não a lista."""
     inicio, fim = janela(periodo, agora)
     linhas = db.buscar_refeicoes(inicio, fim)
     atividades = db.buscar_atividades(inicio, fim)
+    pesos = db.buscar_pesos(inicio, fim)
 
     # numeric do Postgres chega como int ou float conforme o valor; float()
     # normaliza antes de somar.
@@ -67,8 +78,8 @@ def resumir(periodo: str, agora: datetime | None = None) -> dict:
         for campo in db.CAMPOS_MACRO
     }
     log.info(
-        "resumo %s: %s refeições, %s atividades entre %s e %s",
-        periodo, len(linhas), len(atividades), inicio.date(), fim.date(),
+        "resumo %s: %s refeições, %s atividades, %s pesagens entre %s e %s",
+        periodo, len(linhas), len(atividades), len(pesos), inicio.date(), fim.date(),
     )
     return {
         "periodo": periodo,
@@ -78,6 +89,7 @@ def resumir(periodo: str, agora: datetime | None = None) -> dict:
         "refeicoes": len(linhas),
         "por_dia": _agrupar_por_dia(linhas),
         "atividades_por_dia": _agrupar_atividades_por_dia(atividades),
+        "peso_por_dia": _peso_por_dia(pesos),
         **totais,
     }
 
@@ -98,6 +110,11 @@ def _atividade(atividade: dict) -> str:
     )
 
 
+def formatar_peso(valor: float) -> str:
+    """95.0 vira "95kg"; 95.4 continua "95.4kg"."""
+    return f"{valor:.1f}".removesuffix(".0") + "kg"
+
+
 def formatar(dados: dict) -> str:
     if dados["periodo"] == HOJE:
         atividades_hoje = dados["atividades_por_dia"].get(dados["ultimo_dia"], [])
@@ -108,6 +125,9 @@ def formatar(dados: dict) -> str:
             f"🏃 Hoje você realizou: {_atividade(atividade)}"
             for atividade in atividades_hoje
         )
+        peso_hoje = dados["peso_por_dia"].get(dados["ultimo_dia"])
+        if peso_hoje is not None:
+            partes.append(f"⚖️ Seu peso hoje: {formatar_peso(peso_hoje)}")
         if not partes:
             return "Nada registrado hoje ainda."
         return "\n".join(partes)
@@ -115,7 +135,11 @@ def formatar(dados: dict) -> str:
     periodo = (
         f"{dados['inicio']:%d/%m} a {dados['ultimo_dia']:%d/%m}"
     )
-    dias_com_dados = sorted(set(dados["por_dia"]) | set(dados["atividades_por_dia"]))
+    dias_com_dados = sorted(
+        set(dados["por_dia"])
+        | set(dados["atividades_por_dia"])
+        | set(dados["peso_por_dia"])
+    )
     if not dias_com_dados:
         return f"Nada registrado de {periodo}."
 
@@ -129,6 +153,9 @@ def formatar(dados: dict) -> str:
             f"🏃 {_atividade(atividade)}"
             for atividade in dados["atividades_por_dia"].get(dia, [])
         )
+        peso_dia = dados["peso_por_dia"].get(dia)
+        if peso_dia is not None:
+            linhas_dia.append(f"Seu peso no dia {dia:%d/%m}: {formatar_peso(peso_dia)}")
         blocos_por_dia.append("\n".join(linhas_dia))
 
     linhas_por_dia = "\n".join(blocos_por_dia)
