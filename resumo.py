@@ -133,7 +133,7 @@ def formatar(dados: dict) -> str:
 
     linhas_por_dia = "\n".join(blocos_por_dia)
     total = f"Total de {periodo} ({DIAS_DA_SEMANA} dias): {_macros(dados)}"
-    return f"📊 {linhas_por_dia}\n\n{total}"
+    return f"📊 Relatório Semanal (últimos 7 dias)\n{linhas_por_dia}\n\n{total}"
 
 
 if __name__ == "__main__":
