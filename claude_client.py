@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 CAMPOS_MACRO = ("calorias", "proteina_g", "carboidrato_g", "gordura_g")
 
-SCHEMA = {
+SCHEMA_REFEICAO = {
     "type": "object",
     "properties": {
         "itens": {
@@ -46,14 +46,11 @@ SCHEMA = {
     "required": ["itens", "calorias", "proteina_g", "carboidrato_g", "gordura_g"],
 }
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_FOTO = """\
 Você é um extrator de dados nutricionais para um diário alimentar brasileiro.
-Recebe a descrição de uma refeição (texto digitado ou transcrição de áudio) ou \
-uma foto de comida, e responde APENAS com o JSON do schema fornecido.
+Recebe uma foto de comida e responde APENAS com o JSON do schema fornecido.
 
 Regras:
-- Ignore vocativos e saudações ("Claude,", "ô Claude", "bom dia", "então"). \
-Extraia somente alimentos e quantidades.
 - Quantidade não informada: estime a porção caseira brasileira típica e deixe a \
 estimativa explícita no campo "quantidade" (ex: "~1 concha (80g)", "1 fatia (~110g)").
 - Os valores são do alimento preparado como é comido (arroz cozido, não cru; \
@@ -67,6 +64,62 @@ dos itens. Confira a soma antes de responder.
 os totais em 0.
 """
 
+SCHEMA_TEXTO = {
+    "type": "object",
+    "properties": {
+        "tipo": {"type": "string", "enum": ["refeicao", "atividade", "nenhum"]},
+        "refeicao": SCHEMA_REFEICAO,
+        "atividade": {
+            "type": "object",
+            "properties": {
+                "descricao": {"type": "string"},
+                "duracao_min": {"type": "number"},
+                "calorias": {"type": "number"},
+            },
+            "required": ["descricao", "duracao_min", "calorias"],
+        },
+    },
+    "required": ["tipo"],
+}
+
+SYSTEM_PROMPT_TEXTO = """\
+Você é um extrator de dados para um diário alimentar e de atividades físicas \
+brasileiro. Recebe um texto digitado ou transcrição de áudio e primeiro decide \
+o campo "tipo":
+- "refeicao": descreve comida ou bebida consumida.
+- "atividade": descreve exercício físico realizado (corrida, caminhada, \
+musculação, bike, natação etc).
+- "nenhum": não é nem uma coisa nem outra.
+
+Preencha SOMENTE o campo correspondente ao "tipo" escolhido ("refeicao" ou \
+"atividade"); omita o outro.
+
+Ignore vocativos e saudações ("Claude,", "ô Claude", "bom dia", "então") em \
+ambos os casos.
+
+Regras para "refeicao":
+- Quantidade não informada: estime a porção caseira brasileira típica e deixe a \
+estimativa explícita no campo "quantidade" (ex: "~1 concha (80g)", "1 fatia (~110g)").
+- Os valores são do alimento preparado como é comido (arroz cozido, não cru; \
+frango grelhado, não peito cru), incluindo o óleo de preparo quando for o padrão.
+- Use a tabela TACO / rótulos brasileiros como referência quando o alimento for \
+tipicamente nacional.
+- Os campos de topo da refeição (calorias, proteina_g, carboidrato_g, gordura_g) \
+são a SOMA dos itens. Confira a soma antes de responder.
+- Arredonde calorias para inteiro e macros para uma casa decimal.
+
+Regras para "atividade":
+- "duracao_min": duração em minutos. Se não for informada, estime um valor \
+típico para o exercício descrito.
+- "calorias": gasto calórico estimado, com base em duração, tipo de exercício e \
+intensidade típica (MET aproximado) para um adulto de porte médio (~70kg), na \
+ausência de mais informação.
+- "descricao": resume o exercício e, quando relevante, grupo muscular ou \
+distância (ex.: "Corrida de 5km", "Musculação (peito e ombro)", "Bike ergométrica").
+
+Responda APENAS com o JSON do schema fornecido.
+"""
+
 
 class ClaudeError(RuntimeError):
     """Falha na extração — a mensagem é curta o bastante pra ir pro Telegram."""
@@ -77,7 +130,9 @@ class ClaudeError(RuntimeError):
 _semaforo = asyncio.Semaphore(1)
 
 
-def _montar_comando(prompt: str, com_leitura_de_arquivo: bool) -> list[str]:
+def _montar_comando(
+    prompt: str, com_leitura_de_arquivo: bool, schema: dict, system_prompt: str
+) -> list[str]:
     return [
         config.CLAUDE_BIN,
         "-p",
@@ -85,14 +140,14 @@ def _montar_comando(prompt: str, com_leitura_de_arquivo: bool) -> list[str]:
         "--model",
         config.CLAUDE_MODEL,
         "--system-prompt",
-        SYSTEM_PROMPT,
+        system_prompt,
         # Foto precisa da tool Read pra abrir o arquivo; texto não precisa de nada.
         "--tools",
         "Read" if com_leitura_de_arquivo else "",
         "--output-format",
         "json",
         "--json-schema",
-        json.dumps(SCHEMA),
+        json.dumps(schema),
         # Processo automático, ninguém pra aprovar prompt: nada pode ficar travado.
         "--permission-prompts",
         "none",
@@ -107,9 +162,13 @@ def _montar_comando(prompt: str, com_leitura_de_arquivo: bool) -> list[str]:
 
 
 async def _chamar_claude(
-    prompt: str, com_leitura_de_arquivo: bool, cwd: Path
+    prompt: str,
+    com_leitura_de_arquivo: bool,
+    cwd: Path,
+    schema: dict,
+    system_prompt: str,
 ) -> dict:
-    comando = _montar_comando(prompt, com_leitura_de_arquivo)
+    comando = _montar_comando(prompt, com_leitura_de_arquivo, schema, system_prompt)
 
     async with _semaforo:
         processo = await asyncio.create_subprocess_exec(
@@ -171,7 +230,7 @@ def _parsear_envelope(saida: str) -> dict:
     return dados
 
 
-def _validar(dados: dict) -> dict:
+def _validar_refeicao(dados: dict) -> dict:
     """O Python decide o que é aceitável — não o Claude."""
     itens = dados.get("itens")
     if not isinstance(itens, list):
@@ -192,6 +251,27 @@ def _validar(dados: dict) -> dict:
     return dados
 
 
+def _validar_atividade(dados: dict) -> dict:
+    descricao = dados.get("descricao")
+    if not isinstance(descricao, str) or not descricao.strip():
+        raise ClaudeError("o Claude retornou JSON inválido (atividade sem descrição)")
+
+    return {
+        "descricao": descricao.strip(),
+        "duracao_min": _numero(dados, "duracao_min"),
+        "calorias": _numero(dados, "calorias"),
+    }
+
+
+def _validar_texto(dados: dict) -> dict:
+    tipo = dados.get("tipo")
+    if tipo == "refeicao":
+        return {"tipo": tipo, **_validar_refeicao(dados.get("refeicao") or {})}
+    if tipo == "atividade":
+        return {"tipo": tipo, **_validar_atividade(dados.get("atividade") or {})}
+    raise ClaudeError("não identifiquei refeição nem atividade física nessa mensagem")
+
+
 def _numero(origem: dict, campo: str) -> float:
     valor = origem.get(campo)
     if not isinstance(valor, (int, float)) or isinstance(valor, bool) or valor < 0:
@@ -199,13 +279,19 @@ def _numero(origem: dict, campo: str) -> float:
     return float(valor)
 
 
-async def extrair_de_texto(texto: str) -> dict:
-    """Extrai a refeição de um texto digitado ou de uma transcrição de áudio."""
+async def interpretar_texto(texto: str) -> dict:
+    """Extrai refeição ou atividade física de um texto digitado ou transcrição de
+    áudio. O resultado traz "tipo": "refeicao" ou "atividade" para o chamador
+    decidir onde gravar."""
     with tempfile.TemporaryDirectory(dir=config.TMP_DIR) as vazio:
         dados = await _chamar_claude(
-            texto, com_leitura_de_arquivo=False, cwd=Path(vazio)
+            texto,
+            com_leitura_de_arquivo=False,
+            cwd=Path(vazio),
+            schema=SCHEMA_TEXTO,
+            system_prompt=SYSTEM_PROMPT_TEXTO,
         )
-    return _validar(dados)
+    return _validar_texto(dados)
 
 
 async def extrair_de_foto(caminho_imagem: str | Path, legenda: str | None = None) -> dict:
@@ -223,6 +309,10 @@ async def extrair_de_foto(caminho_imagem: str | Path, legenda: str | None = None
         prompt += f"\nO usuário descreveu assim: {legenda}"
 
     dados = await _chamar_claude(
-        prompt, com_leitura_de_arquivo=True, cwd=caminho.parent
+        prompt,
+        com_leitura_de_arquivo=True,
+        cwd=caminho.parent,
+        schema=SCHEMA_REFEICAO,
+        system_prompt=SYSTEM_PROMPT_FOTO,
     )
-    return _validar(dados)
+    return _validar_refeicao(dados)

@@ -25,6 +25,19 @@ create table if not exists dieta.refeicoes (
 create index if not exists refeicoes_criado_em_idx
   on dieta.refeicoes (criado_em desc);
 
+create table if not exists dieta.atividades (
+  id            uuid primary key default gen_random_uuid(),
+  criado_em     timestamptz not null default now(),
+  origem        text not null check (origem in ('texto', 'audio')),
+  entrada_bruta text,
+  descricao     text not null,
+  duracao_min   numeric,
+  calorias      numeric not null
+);
+
+create index if not exists atividades_criado_em_idx
+  on dieta.atividades (criado_em desc);
+
 -- A API do Supabase acessa via os roles abaixo; sem isto o PostgREST não
 -- enxerga o schema mesmo depois de exposto.
 grant usage on schema dieta to anon, authenticated, service_role;

@@ -108,6 +108,13 @@ def _formatar_confirmacao(extracao: dict) -> str:
     )
 
 
+def _formatar_confirmacao_atividade(atividade: dict) -> str:
+    return (
+        f"🏃 Atividade registrada: {atividade['descricao']}.\n"
+        f"~{atividade['calorias']:.0f} kcal em {atividade['duracao_min']:.0f} min"
+    )
+
+
 async def _registrar(update: Update, origem: str, entrada_bruta: str, extracao: dict) -> None:
     # update.message.date é quando VOCÊ mandou, não quando o bot processou.
     # Importa quando o PC passou um tempo desligado e o Telegram entregou a fila
@@ -127,6 +134,31 @@ async def _registrar(update: Update, origem: str, entrada_bruta: str, extracao: 
         # responder "não consegui registrar" por uma confirmação perdida —
         # mentira que levaria você a registrar a mesma refeição duas vezes.
         log.exception("refeição salva, mas a confirmação não chegou ao Telegram")
+
+
+async def _registrar_atividade(
+    update: Update, origem: str, entrada_bruta: str, atividade: dict
+) -> None:
+    await asyncio.to_thread(
+        db.salvar_atividade, origem, entrada_bruta, atividade, update.message.date
+    )
+    texto = _formatar_confirmacao_atividade(atividade)
+    try:
+        await _com_retry(
+            lambda: update.message.reply_text(texto), "envio da confirmação"
+        )
+    except TelegramError:
+        log.exception("atividade salva, mas a confirmação não chegou ao Telegram")
+
+
+async def _registrar_interpretacao(
+    update: Update, origem: str, entrada_bruta: str, resultado: dict
+) -> None:
+    """Roteia pro registro certo conforme o "tipo" decidido pelo Claude."""
+    if resultado["tipo"] == "refeicao":
+        await _registrar(update, origem, entrada_bruta, resultado)
+    else:
+        await _registrar_atividade(update, origem, entrada_bruta, resultado)
 
 
 async def _baixar(update: Update, file_id: str, nome: str) -> Path:
@@ -155,8 +187,8 @@ async def handler_texto(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None
     texto = update.message.text
     try:
         await _sinalizar_digitando(update)
-        extracao = await claude_client.extrair_de_texto(texto)
-        await _registrar(update, "texto", texto, extracao)
+        resultado = await claude_client.interpretar_texto(texto)
+        await _registrar_interpretacao(update, "texto", texto, resultado)
     except (claude_client.ClaudeError, db.DBError) as exc:
         await _responder_erro(update, exc)
     except NetworkError:
@@ -183,8 +215,8 @@ async def handler_audio(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None
         transcricao = await asyncio.to_thread(transcriber.transcrever, caminho)
 
         # Daqui pra frente é idêntico ao fluxo de texto — o Claude nunca vê áudio.
-        extracao = await claude_client.extrair_de_texto(transcricao)
-        await _registrar(update, "audio", transcricao, extracao)
+        resultado = await claude_client.interpretar_texto(transcricao)
+        await _registrar_interpretacao(update, "audio", transcricao, resultado)
     except (
         transcriber.TranscricaoError,
         claude_client.ClaudeError,
