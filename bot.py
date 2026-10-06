@@ -119,6 +119,72 @@ def _formatar_confirmacao_peso(peso: dict) -> str:
     return f"⚖️ Peso registrado: {resumo.formatar_peso(peso['peso_kg'])}"
 
 
+async def _linha_objetivo(quando) -> str | None:
+    """Progresso do dia de `quando`, ou None sem objetivo definido.
+
+    Roda depois do insert: uma falha aqui não pode virar "não consegui
+    registrar" para uma refeição que já está no banco.
+    """
+    try:
+        consumido, objetivo = await asyncio.to_thread(resumo.progresso_do_dia, quando)
+    except db.DBError:
+        log.exception("refeição salva, mas não consegui calcular o objetivo")
+        return None
+    if objetivo is None:
+        return None
+    return resumo.formatar_objetivo(consumido, objetivo)
+
+
+def _ler_calorias(args: list[str]) -> float | None:
+    """Aceita "2000", "2000kcal", "2000 kcal", "2.000"."""
+    texto = "".join(args).lower().removesuffix("kcal").replace(".", "")
+    if not texto.isdigit():
+        return None
+    return float(texto)
+
+
+async def handler_objetivo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """/objetivo 2000 define a meta; /objetivo sozinho mostra o progresso."""
+    if not _autorizado(update):
+        return
+
+    try:
+        if ctx.args:
+            calorias = _ler_calorias(ctx.args)
+            if calorias is None or not 500 <= calorias <= 10_000:
+                texto = "Use assim: /objetivo 2000 (kcal por dia, entre 500 e 10000)."
+            else:
+                await asyncio.to_thread(db.salvar_objetivo, calorias)
+                consumido, objetivo = await asyncio.to_thread(resumo.progresso_do_dia)
+                texto = (
+                    f"🎯 Objetivo definido: {calorias:.0f} kcal por dia.\n"
+                    f"{resumo.formatar_objetivo(consumido, objetivo)}"
+                )
+        else:
+            consumido, objetivo = await asyncio.to_thread(resumo.progresso_do_dia)
+            texto = (
+                resumo.formatar_objetivo(consumido, objetivo) if objetivo is not None
+                else "Nenhum objetivo definido. Use: /objetivo 2000"
+            )
+        await _com_retry(
+            lambda: update.message.reply_text(texto), "envio do objetivo"
+        )
+    except db.DBError as exc:
+        await _responder_erro(update, exc, acao="salvar o objetivo")
+    except NetworkError:
+        log.exception("rede falhou no /objetivo")
+        await _responder_erro(
+            update, RuntimeError("Telegram fora de alcance. Manda de novo."),
+            acao="salvar o objetivo",
+        )
+    except Exception:
+        log.exception("erro inesperado no /objetivo")
+        await _responder_erro(
+            update, RuntimeError("erro inesperado (veja bot.log)"),
+            acao="salvar o objetivo",
+        )
+
+
 async def _registrar(update: Update, origem: str, entrada_bruta: str, extracao: dict) -> None:
     # update.message.date é quando VOCÊ mandou, não quando o bot processou.
     # Importa quando o PC passou um tempo desligado e o Telegram entregou a fila
@@ -129,6 +195,9 @@ async def _registrar(update: Update, origem: str, entrada_bruta: str, extracao: 
     # Já está no banco: vale insistir na confirmação em vez de deixar você
     # achando que a refeição se perdeu.
     texto = _formatar_confirmacao(extracao)
+    linha_objetivo = await _linha_objetivo(update.message.date)
+    if linha_objetivo:
+        texto += f"\n{linha_objetivo}"
     try:
         await _com_retry(
             lambda: update.message.reply_text(texto), "envio da confirmação"
@@ -351,6 +420,7 @@ async def _registrar_menu(app: Application) -> None:
             [
                 ("hoje", "Consumo de hoje"),
                 ("semana", "Consumo dos últimos 7 dias (sem contar hoje)"),
+                ("objetivo", "Definir ou ver a meta diária de kcal"),
             ]
         )
     except TelegramError as exc:
@@ -378,6 +448,7 @@ def main() -> None:
     app.add_handler(MessageHandler(SO_EU & filters.PHOTO, handler_foto))
     app.add_handler(CommandHandler("hoje", handler_hoje, filters=SO_EU))
     app.add_handler(CommandHandler("semana", handler_semana, filters=SO_EU))
+    app.add_handler(CommandHandler("objetivo", handler_objetivo, filters=SO_EU))
     app.post_init = _registrar_menu
 
     log.info("bot no ar (long polling), autorizado: %s", config.TELEGRAM_USER_ID)

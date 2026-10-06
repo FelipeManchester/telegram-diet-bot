@@ -49,10 +49,23 @@ create table if not exists dieta.pesos (
 create index if not exists pesos_criado_em_idx
   on dieta.pesos (criado_em desc);
 
+-- Uma linha por mudança de objetivo; vale a mais recente até o dia consultado,
+-- então trocar a meta hoje não reescreve a % dos dias anteriores.
+create table if not exists dieta.objetivos (
+  id         uuid primary key default gen_random_uuid(),
+  criado_em  timestamptz not null default now(),
+  calorias   numeric not null check (calorias > 0)
+);
+
+create index if not exists objetivos_criado_em_idx
+  on dieta.objetivos (criado_em desc);
+
 -- A API do Supabase acessa via os roles abaixo; sem isto o PostgREST não
 -- enxerga o schema mesmo depois de exposto.
 grant usage on schema dieta to anon, authenticated, service_role;
 grant all on all tables in schema dieta to service_role;
+-- O grant acima só cobre tabelas que já existem; isto cobre as criadas depois.
+alter default privileges in schema dieta grant all on tables to service_role;
 
 -- Consulta de referência pro roadmap (total por dia, no fuso de São Paulo):
 --

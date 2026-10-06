@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 TABELA = "refeicoes"
 TABELA_ATIVIDADES = "atividades"
 TABELA_PESOS = "pesos"
+TABELA_OBJETIVOS = "objetivos"
 
 _cliente: Client = create_client(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY)
 
@@ -84,6 +85,35 @@ def buscar_pesos(inicio: datetime, fim: datetime) -> list[dict]:
         raise DBError(f"falha ao consultar o banco ({exc})") from exc
 
     return resposta.data or []
+
+
+def buscar_objetivos(fim: datetime) -> list[dict]:
+    """Todos os objetivos com criado_em < fim, do mais antigo ao mais recente."""
+    try:
+        resposta = (
+            _tabela(TABELA_OBJETIVOS)
+            .select("criado_em,calorias")
+            .lt("criado_em", fim.isoformat())
+            .order("criado_em")
+            .execute()
+        )
+    except Exception as exc:
+        raise DBError(f"falha ao consultar o banco ({exc})") from exc
+
+    return resposta.data or []
+
+
+def salvar_objetivo(calorias: float) -> dict:
+    try:
+        resposta = _tabela(TABELA_OBJETIVOS).insert({"calorias": calorias}).execute()
+    except Exception as exc:
+        raise DBError(f"falha ao salvar objetivo no banco ({exc})") from exc
+
+    if not resposta.data:
+        raise DBError("o insert não retornou nenhuma linha")
+
+    log.info("objetivo salvo: %s kcal", calorias)
+    return resposta.data[0]
 
 
 def salvar_refeicao(

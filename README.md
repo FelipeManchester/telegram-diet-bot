@@ -135,6 +135,11 @@ credenciais OAuth do `$HOME`. Rodando como root, toda extração quebraria.
 | Foto | com ou sem legenda; a legenda ajuda na estimativa de porção |
 | `/hoje` | total consumido hoje, 00:00 até 23:59 |
 | `/semana` | total dos 7 dias anteriores, **sem contar hoje** |
+| `/objetivo 2000` | define a meta diária de kcal; sem número, mostra o progresso de hoje |
+
+Com um objetivo definido, a confirmação de cada refeição, o `/hoje` e cada dia
+do `/semana` mostram quanto da meta já foi consumido. Trocar a meta não altera
+os dias anteriores: cada dia é comparado com o objetivo que valia nele.
 
 Os resumos também rodam no terminal:
 

@@ -64,12 +64,46 @@ def _peso_por_dia(pesos: list[dict]) -> dict[date, float]:
     return por_dia
 
 
+def _objetivo_do_dia(objetivos: list[dict], dia: date) -> float | None:
+    """Último objetivo definido até o fim de `dia`: uma meta criada à tarde já
+    vale pro dia inteiro. `objetivos` vem ordenado por criado_em."""
+    vigente = None
+    for objetivo in objetivos:
+        definido_em = datetime.fromisoformat(objetivo["criado_em"]).astimezone(config.TIMEZONE).date()
+        if definido_em > dia:
+            break
+        vigente = float(objetivo["calorias"])
+    return vigente
+
+
+def progresso_do_dia(agora: datetime | None = None) -> tuple[float, float | None]:
+    """(kcal consumidas, objetivo vigente) do dia de `agora`, no fuso local."""
+    inicio, fim = janela(HOJE, agora)
+    consumido = sum(float(linha["calorias"]) for linha in db.buscar_refeicoes(inicio, fim))
+    objetivo = _objetivo_do_dia(db.buscar_objetivos(fim), (fim - timedelta(days=1)).date())
+    return consumido, objetivo
+
+
+def formatar_objetivo(consumido: float, objetivo: float) -> str:
+    percentual = consumido / objetivo * 100
+    diferenca = objetivo - consumido
+    situacao = (
+        f"faltam {diferenca:.0f} kcal" if diferenca >= 0
+        else f"passou {-diferenca:.0f} kcal"
+    )
+    return (
+        f"🎯 Você consumiu {consumido:.0f} de {objetivo:.0f} kcal do seu objetivo "
+        f"({percentual:.0f}%) · {situacao}"
+    )
+
+
 def resumir(periodo: str, agora: datetime | None = None) -> dict:
     """Totais do período. `refeicoes` é a contagem, não a lista."""
     inicio, fim = janela(periodo, agora)
     linhas = db.buscar_refeicoes(inicio, fim)
     atividades = db.buscar_atividades(inicio, fim)
     pesos = db.buscar_pesos(inicio, fim)
+    objetivos = db.buscar_objetivos(fim)
 
     # numeric do Postgres chega como int ou float conforme o valor; float()
     # normaliza antes de somar.
@@ -90,6 +124,7 @@ def resumir(periodo: str, agora: datetime | None = None) -> dict:
         "por_dia": _agrupar_por_dia(linhas),
         "atividades_por_dia": _agrupar_atividades_por_dia(atividades),
         "peso_por_dia": _peso_por_dia(pesos),
+        "objetivos": objetivos,
         **totais,
     }
 
@@ -130,6 +165,9 @@ def formatar(dados: dict) -> str:
             partes.append(f"⚖️ Seu peso hoje: {formatar_peso(peso_hoje)}")
         if not partes:
             return "Nada registrado hoje ainda."
+        objetivo = _objetivo_do_dia(dados["objetivos"], dados["ultimo_dia"])
+        if objetivo is not None:
+            partes.append(formatar_objetivo(dados["calorias"], objetivo))
         return "\n".join(partes)
 
     periodo = (
@@ -146,9 +184,15 @@ def formatar(dados: dict) -> str:
     # Só dias com refeição ou atividade aparecem — um dia sem registro não vira
     # linha "0 kcal".
     blocos_por_dia = []
+    dias_com_objetivo = dias_dentro = 0
     for dia in dias_com_dados:
         valores = dados["por_dia"].get(dia)
         linhas_dia = [f"{dia:%d/%m} - {_macros(valores)}" if valores else f"{dia:%d/%m}"]
+        objetivo = _objetivo_do_dia(dados["objetivos"], dia)
+        if valores and objetivo is not None:
+            dias_com_objetivo += 1
+            dias_dentro += valores["calorias"] <= objetivo
+            linhas_dia[0] += f" · 🎯 {valores['calorias'] / objetivo * 100:.0f}% de {objetivo:.0f}"
         linhas_dia.extend(
             f"🏃 {_atividade(atividade)}"
             for atividade in dados["atividades_por_dia"].get(dia, [])
@@ -160,6 +204,8 @@ def formatar(dados: dict) -> str:
 
     linhas_por_dia = "\n".join(blocos_por_dia)
     total = f"Total de {periodo} ({DIAS_DA_SEMANA} dias): {_macros(dados)}"
+    if dias_com_objetivo:
+        total += f"\n🎯 Dentro do objetivo em {dias_dentro} de {dias_com_objetivo} dias"
     return f"📊 Relatório Semanal (últimos 7 dias)\n{linhas_por_dia}\n\n{total}"
 
 
